@@ -3,6 +3,18 @@ const app = express();
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt-nodejs');
 const cors = require('cors');
+const knex = require('knex');
+
+const db = knex({
+  client: 'pg',
+  connection: {
+    host : '127.0.0.1',
+    user : 'bellalo',
+    password : '',
+    database : 'smart-brain-database'
+  }
+});
+
 
 app.use(bodyParser.json());
 app.use(cors());
@@ -36,49 +48,61 @@ app.get('/', (req, res)=>{
 app.post('/signin', (req, res)=>{
   if(req.body.email === database.users[0].email &&
      req.body.password === database.users[0].password){
-       res.json('success');
+       res.json(database.users[0]);
      }else{
        res.status(400).json('error logging in')
      }
 })
 
 app.post('/register', (req, res)=>{
-  database.users.push({
-    id: '125',
-    name: req.body.name,
-    email: req.body.email,
-    password: req.body.password,
-    entries: 0,
-    joined: new Date()
+  const hash = bcrypt.hashSync(req.body.password)
+  db.transaction(trx=>{
+    trx.insert({
+      hash: hash,
+      email: req.body.email
+    })
+    .into('login')
+    .returning('email')
+    .then(loginEmail=>{
+      return trx('users')
+       .insert({
+         name: req.body.name,
+         email: loginEmail[0],
+         joined: new Date()
+       })
+       .returning('*')
+       .then(user=>{
+         res.json(user[0])
+       })
+    })
+    .then(trx.commit)
+    .catch(trx.rollback)
   })
-  res.json(database.users[database.users.length-1])
+  .catch(err=>res.status(400).json('unable to register'))
 })
 
 app.get('/profile/:id', (req, res)=>{
-  let found = false;
-  database.users.map(user=>{
-    if(user.id === req.params.id){
-      found = true;
-      return res.json(user);
-    }
-  })
-  if(!found){
-    res.status(400).json('no such user')
-  }
+  db.select('*').from('users')
+    .where('id', '=', req.params.id)
+    .then(user=>{
+      if(user.length){
+        return res.json(user[0])
+      }else{
+        res.status(400).json('user not find')
+      }
+    })
+    .catch(err=>res.status(400).json('unable to find the user'))
 })
 
 app.put('/image',(req, res)=>{
-  let found = false;
-  database.users.map(user=>{
-    if(user.id === req.body.id){
-      found = true;
-      user.entries ++
-      return res.json(user.entries);
-    }
-  })
-  if(!found){
-    res.status(400).json('no such user')
-  }
+  db.select('*').from('users')
+    .where('id', '=', req.body.id)
+    .increment('entries', 1)
+    .returning('entries')
+    .then(entries=>{
+      res.json(entries[0])
+    })
+    .catch(err=>res.status(400).json('fail to count'))
 })
 
 
